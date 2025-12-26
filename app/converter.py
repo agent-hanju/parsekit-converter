@@ -4,8 +4,9 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Generator
 
-from pdf2image import convert_from_bytes
+from pdf2image import convert_from_bytes, convert_from_path, pdfinfo_from_path
 from pdf2image.exceptions import PDFInfoNotInstalledError, PDFPageCountError
 
 from .exceptions import (
@@ -87,6 +88,57 @@ async def convert_with_libreoffice(content: bytes, filename: str) -> tuple[bytes
         return pdf_content, True
 
 
+def convert_pdf_to_images_generator(
+    pdf_path: str,
+    format: str = "png",
+    dpi: int = 150,
+) -> Generator[tuple[int, bytes, int], None, None]:
+    """
+    Convert PDF to images using generator (memory efficient).
+    Yields (page_number, image_bytes, total_pages) tuples one at a time.
+    """
+    pil_format = format.upper()
+    if pil_format == "JPG":
+        pil_format = "JPEG"
+
+    try:
+        info = pdfinfo_from_path(pdf_path)
+        total_pages = info["Pages"]
+    except PDFInfoNotInstalledError:
+        logger.error("Poppler is not installed")
+        raise PopplerNotFoundError("Poppler is not installed")
+    except Exception as e:
+        logger.error(f"Failed to get PDF info: {e}")
+        raise ImageConversionError(f"Failed to get PDF info: {e}")
+
+    try:
+        for page_num in range(1, total_pages + 1):
+            # Convert one page at a time
+            images = convert_from_path(
+                pdf_path,
+                dpi=dpi,
+                first_page=page_num,
+                last_page=page_num,
+            )
+
+            if images:
+                buffer = io.BytesIO()
+                images[0].save(buffer, format=pil_format)
+                image_bytes = buffer.getvalue()
+                buffer.close()
+                images[0].close()
+
+                logger.debug(f"Converted page {page_num}/{total_pages} to {format}")
+                yield page_num, image_bytes, total_pages
+
+    except PDFPageCountError as e:
+        logger.error(f"Failed to convert PDF to images: {e}")
+        raise ImageConversionError(f"Failed to convert PDF to images: {e}")
+    except Exception as e:
+        logger.error(f"Failed to convert PDF to images: {e}")
+        raise ImageConversionError(f"Failed to convert PDF to images: {e}")
+
+
 async def convert_pdf_to_images(
     pdf_bytes: bytes,
     format: str = "png",
@@ -95,6 +147,8 @@ async def convert_pdf_to_images(
     """
     Convert PDF to images.
     Returns list of image bytes (one per page).
+
+    Note: For memory efficiency with large PDFs, use convert_pdf_to_images_generator instead.
     """
     try:
         images = convert_from_bytes(pdf_bytes, dpi=dpi)

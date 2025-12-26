@@ -1,12 +1,16 @@
+import base64
+import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from .converter import CONVERT_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSIONS, convert_pdf_to_images, convert_to_pdf
+from .converter import CONVERT_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSIONS, convert_pdf_to_images_generator, convert_to_pdf
 from .exceptions import AppException, EmptyFileError, ErrorCode
-from .models import ApiResponse, ConvertResponse, ImageConvertResponse, ImagePage
+from .models import ApiResponse, ConvertResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -102,21 +106,27 @@ async def convert_document_raw(file: UploadFile = File(...)):
 
     logger.info(f"Converted {filename} -> {output_filename} ({len(pdf_bytes)} bytes)")
 
-    return Response(
-        content=pdf_bytes,
+    # Stream response in chunks
+    def iter_pdf():
+        chunk_size = 64 * 1024  # 64KB chunks
+        for i in range(0, len(pdf_bytes), chunk_size):
+            yield pdf_bytes[i : i + chunk_size]
+
+    return StreamingResponse(
+        iter_pdf(),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{output_filename}"'},
     )
 
 
-@app.post("/convert/images", response_model=ApiResponse[ImageConvertResponse])
+@app.post("/convert/images")
 async def convert_document_to_images(
     file: UploadFile = File(...),
     format: str = "png",
     dpi: int = 150,
 ):
     """
-    Convert document to images (one per page).
+    Convert document to images (one per page) with NDJSON streaming.
 
     Supports: DOC, DOCX, PPT, PPTX, XLS, XLSX, HWP, HWPX, ODT, ODP, ODS, PDF, and images.
     Image files are returned as-is (single page).
@@ -125,7 +135,10 @@ async def convert_document_to_images(
     - format: Output image format (png, jpg, webp). Default: png
     - dpi: Resolution in DPI. Default: 150
 
-    Returns JSON with base64-encoded images for each page.
+    Returns NDJSON stream with one JSON object per line for each page:
+    {"page": 1, "content": "base64...", "size": 12345, "total_pages": 10}
+    {"page": 2, "content": "base64...", "size": 23456, "total_pages": 10}
+    ...
     """
     logger.info(f"Converting document to images: {file.filename}, format={format}, dpi={dpi}")
 
@@ -137,53 +150,49 @@ async def convert_document_to_images(
     content_type = file.content_type or "application/octet-stream"
     ext = Path(filename).suffix.lower()
 
-    import base64
-
     # Image files - return as-is (single page)
     if ext in IMAGE_EXTENSIONS or content_type.startswith("image/"):
         logger.info(f"Image file, returning as-is: {filename}")
-        pages = [
-            ImagePage(
-                page=1,
-                content=base64.b64encode(content).decode("utf-8"),
-                size=len(content),
-            )
-        ]
-        # Detect format from extension
-        detected_format = ext.lstrip(".") if ext else "png"
-        if detected_format == "jpeg":
-            detected_format = "jpg"
 
-        result = ImageConvertResponse(
-            format=detected_format,
-            pages=pages,
-            total_pages=1,
-        )
-        return ApiResponse.success(data=result)
+        def generate_single_image():
+            page_data = {
+                "page": 1,
+                "content": base64.b64encode(content).decode("utf-8"),
+                "size": len(content),
+                "total_pages": 1,
+            }
+            yield json.dumps(page_data) + "\n"
 
-    # Convert to PDF first if needed
+        return StreamingResponse(generate_single_image(), media_type="application/x-ndjson")
+
+    # Convert to PDF first if needed, save to temp file for generator
     pdf_bytes, _ = await convert_to_pdf(content, filename, content_type)
 
-    # Then convert PDF to images
-    image_bytes_list = await convert_pdf_to_images(pdf_bytes, format=format, dpi=dpi)
+    # Write PDF to temp file for page-by-page processing
+    temp_dir = tempfile.mkdtemp()
+    pdf_path = os.path.join(temp_dir, "temp.pdf")
+    with open(pdf_path, "wb") as f:
+        f.write(pdf_bytes)
 
-    pages = [
-        ImagePage(
-            page=i + 1,
-            content=base64.b64encode(img_bytes).decode("utf-8"),
-            size=len(img_bytes),
-        )
-        for i, img_bytes in enumerate(image_bytes_list)
-    ]
+    def generate_images():
+        try:
+            for page_num, img_bytes, total_pages in convert_pdf_to_images_generator(
+                pdf_path, format=format, dpi=dpi
+            ):
+                page_data = {
+                    "page": page_num,
+                    "content": base64.b64encode(img_bytes).decode("utf-8"),
+                    "size": len(img_bytes),
+                    "total_pages": total_pages,
+                }
+                yield json.dumps(page_data) + "\n"
+            logger.info(f"Converted {filename} to images (streaming)")
+        finally:
+            # Cleanup temp directory
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
-    result = ImageConvertResponse(
-        format=format,
-        pages=pages,
-        total_pages=len(pages),
-    )
-
-    logger.info(f"Converted {filename} to {len(pages)} {format} images")
-    return ApiResponse.success(data=result)
+    return StreamingResponse(generate_images(), media_type="application/x-ndjson")
 
 
 def main():

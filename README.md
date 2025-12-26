@@ -52,7 +52,7 @@ curl -X POST http://localhost:8080/convert/raw \
 
 ### `POST /convert/images`
 
-문서를 이미지로 변환 (페이지별)
+문서를 이미지로 변환 (페이지별 NDJSON 스트리밍)
 
 ```bash
 curl -X POST "http://localhost:8080/convert/images?format=png&dpi=150" \
@@ -64,21 +64,27 @@ curl -X POST "http://localhost:8080/convert/images?format=png&dpi=150" \
 - `format`: 출력 포맷 (png, jpg, webp). 기본값: png
 - `dpi`: 해상도. 기본값: 150
 
-**응답:**
+**응답 (NDJSON 스트리밍):**
 
-```json
-{
-  "code": 0,
-  "data": {
-    "format": "png",
-    "total_pages": 3,
-    "pages": [
-      { "page": 1, "content": "iVBORw0KGgo...", "size": 12345 },
-      { "page": 2, "content": "iVBORw0KGgo...", "size": 12345 },
-      { "page": 3, "content": "iVBORw0KGgo...", "size": 12345 }
-    ]
-  }
-}
+페이지별로 한 줄씩 JSON을 스트리밍합니다. 클라이언트는 첫 페이지부터 바로 처리할 수 있습니다.
+
+```
+{"page": 1, "content": "iVBORw0KGgo...", "size": 12345, "total_pages": 3}
+{"page": 2, "content": "iVBORw0KGgo...", "size": 12345, "total_pages": 3}
+{"page": 3, "content": "iVBORw0KGgo...", "size": 12345, "total_pages": 3}
+```
+
+**클라이언트 예제 (Python):**
+
+```python
+import httpx
+import json
+
+with httpx.stream("POST", "http://localhost:8080/convert/images",
+                  files={"file": open("document.pdf", "rb")}) as r:
+    for line in r.iter_lines():
+        page = json.loads(line)
+        print(f"Page {page['page']}/{page['total_pages']} received")
 ```
 
 ### `GET /supported-formats`

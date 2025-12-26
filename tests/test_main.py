@@ -115,7 +115,7 @@ class TestConvertRawEndpoint:
 
 
 class TestConvertImagesEndpoint:
-    """Tests for the /convert/images endpoint."""
+    """Tests for the /convert/images endpoint (NDJSON streaming)."""
 
     def test_convert_images_empty_file_returns_error(self, client):
         """Converting empty file should return error."""
@@ -129,9 +129,12 @@ class TestConvertImagesEndpoint:
         assert data["code"] == ErrorCode.EMPTY_FILE
 
     def test_convert_images_with_format_param(self, client, sample_pdf_bytes):
-        """Should accept format parameter."""
-        with patch("app.converter.convert_pdf_to_images") as mock_convert:
-            mock_convert.return_value = [b"fake image data"]
+        """Should accept format parameter and return NDJSON stream."""
+        import json
+
+        with patch("app.main.convert_pdf_to_images_generator") as mock_convert:
+            # Generator yields (page_num, image_bytes, total_pages)
+            mock_convert.return_value = iter([(1, b"fake image data", 1)])
 
             response = client.post(
                 "/convert/images?format=jpg&dpi=300",
@@ -139,20 +142,30 @@ class TestConvertImagesEndpoint:
             )
 
             assert response.status_code == 200
-            data = response.json()
-            assert data["code"] == 0
-            assert data["data"]["format"] == "jpg"
-            assert data["data"]["total_pages"] == 1
+            assert response.headers["content-type"] == "application/x-ndjson"
+
+            # Parse NDJSON response
+            lines = response.text.strip().split("\n")
+            assert len(lines) == 1
+            page_data = json.loads(lines[0])
+            assert page_data["page"] == 1
+            assert page_data["total_pages"] == 1
 
     def test_convert_images_passthrough_image(self, client, sample_png_bytes):
-        """Image files should be returned as-is."""
+        """Image files should be returned as-is in NDJSON format."""
+        import json
+
         response = client.post(
             "/convert/images",
             files={"file": ("test.png", sample_png_bytes, "image/png")},
         )
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == 0
-        assert data["data"]["format"] == "png"
-        assert data["data"]["total_pages"] == 1
+        assert response.headers["content-type"] == "application/x-ndjson"
+
+        # Parse NDJSON response
+        lines = response.text.strip().split("\n")
+        assert len(lines) == 1
+        page_data = json.loads(lines[0])
+        assert page_data["page"] == 1
+        assert page_data["total_pages"] == 1
