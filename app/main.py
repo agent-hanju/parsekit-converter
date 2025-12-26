@@ -4,9 +4,9 @@ from pathlib import Path
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from .converter import CONVERT_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSIONS, convert_to_pdf
+from .converter import CONVERT_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSIONS, convert_pdf_to_images, convert_to_pdf
 from .exceptions import AppException, EmptyFileError, ErrorCode
-from .models import ApiResponse, ConvertResponse
+from .models import ApiResponse, ConvertResponse, ImageConvertResponse, ImagePage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -107,6 +107,83 @@ async def convert_document_raw(file: UploadFile = File(...)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{output_filename}"'},
     )
+
+
+@app.post("/convert/images", response_model=ApiResponse[ImageConvertResponse])
+async def convert_document_to_images(
+    file: UploadFile = File(...),
+    format: str = "png",
+    dpi: int = 150,
+):
+    """
+    Convert document to images (one per page).
+
+    Supports: DOC, DOCX, PPT, PPTX, XLS, XLSX, HWP, HWPX, ODT, ODP, ODS, PDF, and images.
+    Image files are returned as-is (single page).
+
+    Parameters:
+    - format: Output image format (png, jpg, webp). Default: png
+    - dpi: Resolution in DPI. Default: 150
+
+    Returns JSON with base64-encoded images for each page.
+    """
+    logger.info(f"Converting document to images: {file.filename}, format={format}, dpi={dpi}")
+
+    content = await file.read()
+    if not content:
+        raise EmptyFileError("Empty file uploaded")
+
+    filename = file.filename or "document"
+    content_type = file.content_type or "application/octet-stream"
+    ext = Path(filename).suffix.lower()
+
+    import base64
+
+    # Image files - return as-is (single page)
+    if ext in IMAGE_EXTENSIONS or content_type.startswith("image/"):
+        logger.info(f"Image file, returning as-is: {filename}")
+        pages = [
+            ImagePage(
+                page=1,
+                content=base64.b64encode(content).decode("utf-8"),
+                size=len(content),
+            )
+        ]
+        # Detect format from extension
+        detected_format = ext.lstrip(".") if ext else "png"
+        if detected_format == "jpeg":
+            detected_format = "jpg"
+
+        result = ImageConvertResponse(
+            format=detected_format,
+            pages=pages,
+            total_pages=1,
+        )
+        return ApiResponse.success(data=result)
+
+    # Convert to PDF first if needed
+    pdf_bytes, _ = await convert_to_pdf(content, filename, content_type)
+
+    # Then convert PDF to images
+    image_bytes_list = await convert_pdf_to_images(pdf_bytes, format=format, dpi=dpi)
+
+    pages = [
+        ImagePage(
+            page=i + 1,
+            content=base64.b64encode(img_bytes).decode("utf-8"),
+            size=len(img_bytes),
+        )
+        for i, img_bytes in enumerate(image_bytes_list)
+    ]
+
+    result = ImageConvertResponse(
+        format=format,
+        pages=pages,
+        total_pages=len(pages),
+    )
+
+    logger.info(f"Converted {filename} to {len(pages)} {format} images")
+    return ApiResponse.success(data=result)
 
 
 def main():

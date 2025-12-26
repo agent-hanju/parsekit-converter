@@ -28,3 +28,19 @@ class ConvertResponse(BaseModel):
     content: str  # base64-encoded PDF
     size: int
     converted: bool  # True if conversion happened, False if passthrough
+
+
+class ImagePage(BaseModel):
+    """이미지 페이지"""
+
+    page: int
+    content: str  # base64-encoded image
+    size: int
+
+
+class ImageConvertResponse(BaseModel):
+    """이미지 변환 결과"""
+
+    format: str
+    pages: list[ImagePage]
+    total_pages: int

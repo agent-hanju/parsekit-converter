@@ -1,14 +1,20 @@
+import io
 import logging
 import os
 import subprocess
 import tempfile
 from pathlib import Path
 
+from pdf2image import convert_from_bytes
+from pdf2image.exceptions import PDFInfoNotInstalledError, PDFPageCountError
+
 from .exceptions import (
     ConversionError,
     ConversionOutputNotFoundError,
     ConversionTimeoutError,
+    ImageConversionError,
     LibreOfficeNotFoundError,
+    PopplerNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,3 +85,39 @@ async def convert_with_libreoffice(content: bytes, filename: str) -> tuple[bytes
 
         logger.info(f"Converted {filename} to PDF ({len(pdf_content)} bytes)")
         return pdf_content, True
+
+
+async def convert_pdf_to_images(
+    pdf_bytes: bytes,
+    format: str = "png",
+    dpi: int = 150,
+) -> list[bytes]:
+    """
+    Convert PDF to images.
+    Returns list of image bytes (one per page).
+    """
+    try:
+        images = convert_from_bytes(pdf_bytes, dpi=dpi)
+    except PDFInfoNotInstalledError:
+        logger.error("Poppler is not installed")
+        raise PopplerNotFoundError("Poppler is not installed")
+    except PDFPageCountError as e:
+        logger.error(f"Failed to convert PDF to images: {e}")
+        raise ImageConversionError(f"Failed to convert PDF to images: {e}")
+    except Exception as e:
+        logger.error(f"Failed to convert PDF to images: {e}")
+        raise ImageConversionError(f"Failed to convert PDF to images: {e}")
+
+    result = []
+    pil_format = format.upper()
+    if pil_format == "JPG":
+        pil_format = "JPEG"
+
+    for i, image in enumerate(images):
+        buffer = io.BytesIO()
+        image.save(buffer, format=pil_format)
+        result.append(buffer.getvalue())
+        logger.debug(f"Converted page {i + 1} to {format}")
+
+    logger.info(f"Converted PDF to {len(result)} {format} images")
+    return result

@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice \
     libreoffice-java-common \
     fonts-unfonts-core \
+    poppler-utils \
     wget \
     && wget -q -O /tmp/H2Orestart.oxt \
         "https://github.com/ebandal/H2Orestart/releases/download/v0.7.9/H2Orestart.oxt" \

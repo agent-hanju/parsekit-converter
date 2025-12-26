@@ -112,3 +112,47 @@ class TestConvertRawEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ErrorCode.EMPTY_FILE
+
+
+class TestConvertImagesEndpoint:
+    """Tests for the /convert/images endpoint."""
+
+    def test_convert_images_empty_file_returns_error(self, client):
+        """Converting empty file should return error."""
+        response = client.post(
+            "/convert/images",
+            files={"file": ("test.pdf", b"", "application/pdf")},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == ErrorCode.EMPTY_FILE
+
+    def test_convert_images_with_format_param(self, client, sample_pdf_bytes):
+        """Should accept format parameter."""
+        with patch("app.converter.convert_pdf_to_images") as mock_convert:
+            mock_convert.return_value = [b"fake image data"]
+
+            response = client.post(
+                "/convert/images?format=jpg&dpi=300",
+                files={"file": ("test.pdf", sample_pdf_bytes, "application/pdf")},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["code"] == 0
+            assert data["data"]["format"] == "jpg"
+            assert data["data"]["total_pages"] == 1
+
+    def test_convert_images_passthrough_image(self, client, sample_png_bytes):
+        """Image files should be returned as-is."""
+        response = client.post(
+            "/convert/images",
+            files={"file": ("test.png", sample_png_bytes, "image/png")},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == 0
+        assert data["data"]["format"] == "png"
+        assert data["data"]["total_pages"] == 1

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "parsekit-converter"
-version = "0.1.0"
+version = "0.1.1"
 description = "LibreOffice-based document to PDF conversion API"
 readme = "README.md"
 license = "MIT"
@@ -21,6 +21,8 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",
+    "pdf2image>=1.17.0",
+    "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]

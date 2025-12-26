@@ -50,6 +50,37 @@ curl -X POST http://localhost:8080/convert/raw \
   -o output.pdf
 ```
 
+### `POST /convert/images`
+
+문서를 이미지로 변환 (페이지별)
+
+```bash
+curl -X POST "http://localhost:8080/convert/images?format=png&dpi=150" \
+  -F "file=@document.pdf"
+```
+
+**파라미터:**
+
+- `format`: 출력 포맷 (png, jpg, webp). 기본값: png
+- `dpi`: 해상도. 기본값: 150
+
+**응답:**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "format": "png",
+    "total_pages": 3,
+    "pages": [
+      { "page": 1, "content": "iVBORw0KGgo...", "size": 12345 },
+      { "page": 2, "content": "iVBORw0KGgo...", "size": 12345 },
+      { "page": 3, "content": "iVBORw0KGgo...", "size": 12345 }
+    ]
+  }
+}
+```
+
 ### `GET /supported-formats`
 
 지원 포맷 목록 조회
@@ -69,19 +100,20 @@ docker run -p 8080:8080 parsekit-converter
 
 ### 로컬 실행
 
-**1. LibreOffice 설치**
+**1. LibreOffice + Poppler 설치**
 
 ```bash
 # Ubuntu/Debian
-apt-get install libreoffice libreoffice-java-common default-jre
+apt-get install libreoffice libreoffice-java-common default-jre poppler-utils
 
 # macOS
 brew install --cask libreoffice
-# + Java 설치: brew install openjdk
+brew install poppler openjdk
 
 # Windows
-# https://www.libreoffice.org/download
-# + Java 설치: https://adoptium.net/
+# LibreOffice: https://www.libreoffice.org/download
+# Java: https://adoptium.net/
+# Poppler: https://github.com/oschwartz10612/poppler-windows/releases
 ```
 
 **2. HWP 지원 (선택)**
@@ -107,10 +139,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 | ---- | ------------------ |
 | 0    | 성공               |
 | 101  | 빈 파일            |
-| 201  | 변환 실패          |
+| 201  | PDF 변환 실패      |
 | 202  | 출력 파일 없음     |
 | 203  | 타임아웃           |
 | 204  | LibreOffice 미설치 |
+| 301  | 이미지 변환 실패   |
+| 302  | Poppler 미설치     |
 | 501  | 내부 오류          |
 
 자세한 내용은 [docs/errors.md](docs/errors.md) 참조
