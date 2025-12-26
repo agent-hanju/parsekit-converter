@@ -1,0 +1,17 @@
+services:
+  parsekit-converter:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./app:/app/app:ro
+    restart: unless-stopped
+
+  test:
+    build: .
+    volumes:
+      - ./app:/app/app:ro
+      - ./tests:/app/tests:ro
+    command: pytest tests/ -v
+    profiles:
+      - test
